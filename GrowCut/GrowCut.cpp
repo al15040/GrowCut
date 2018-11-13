@@ -1,6 +1,9 @@
+#pragma unmanaged
+
 #include "GrowCut.h"
 
 #include <iostream>
+
 
 GrowCut::GrowCut(const std::vector<int>& sourceReso, int labelTypeNum)
 {
@@ -44,14 +47,14 @@ void GrowCut::initState(const short* src, const int* initLabel)
 	src_size_ = 1;
 	for (const auto& reso : src_resolution_)
 		src_size_ *= reso;
-
-	src_state_.clear();
 	src_state_.resize(src_size_);
 #pragma omp parallel for
 	for (int i = 0; i < src_size_; ++i)
 	{
-		src_state_[i] = CellState(initLabel[i], 1.0, EVecXi((int)src[i]));
-		if (initLabel < 0) src_state_[i].strength_ = 0.0;
+    EVecXi v(1);
+    v << (int)src[i];
+		src_state_[i] = CellState(initLabel[i], 1.0, v);
+		if (initLabel[i] < 0) src_state_[i].strength_ = 0.0;
 	}
 }
 
@@ -59,15 +62,32 @@ void GrowCut::initState(const short* src, const int* initLabel)
 void GrowCut::Segmentation(const short* src, const int* initLabel, std::vector<int>& result)
 {
 	initState(src, initLabel);
+	int stepI = 0;
+	while( GrowCell() ) std::cout << "Grow Cell : "<< stepI++ << std::endl;
+
 	result.clear();
-	result.resize(src_size_);
-
-	while( GrowCell() ) std::cout << "Grow Cell\n";
-
-	#pragma omp parallel for
+	result.resize(src_size_); 
+#pragma omp parallel for
 	for (int i = 0; i < (int)src_state_.size(); ++i)
 		result[i] = src_state_[i].label_;
 }
+
+
+bool GrowCut::SegmentationOneStep(const short* src, const int* initLabel, std::vector<int>& result, bool isInit)
+{
+	if (isInit) initState(src, initLabel);
+
+	bool isChangeState = GrowCell();
+
+	result.clear();
+	result.resize(src_size_);
+#pragma omp parallel for
+	for (int i = 0; i < (int)src_state_.size(); ++i)
+		result[i] = src_state_[i].label_;
+
+	return isChangeState;
+}
+
 
 
 bool GrowCut::GrowCell()
@@ -77,10 +97,15 @@ bool GrowCut::GrowCell()
 #pragma omp parallel for
 	for (int i = 0; i < src_size_; ++i) if (src_state_[i].label_ > -2)
 	{
-		if ( isChangeState = IsForceOccupied(i) ) continue;
+		std::vector<int> neighborIndices = searchNeighborIdx(i);
+		if ( IsForceOccupied(i, neighborIndices) )
+		{	
+			isChangeState = true;
+			continue;
+		}
 
 		//近傍セルが注目セルに攻撃を仕掛ける
-		for ( const auto& neighbor : searchNeighborIdx(i) )
+		for ( const auto& neighbor : neighborIndices )
 		{
 			//近傍セルの近傍に敵がたくさんいる場合は攻撃を禁止
 			int weakestEnemyIdx;
@@ -135,7 +160,7 @@ int GrowCut::calcMaxEnemyNum(int idx, const std::vector<int>& neighborIndices, i
 	for (const auto& neighbor : neighborIndices)
 	{
 		int neighborLabel = src_state_[neighbor].label_;
-		//近傍ラベルが定義済み　かつ　注目セルのラベルと違う場合
+		//近傍セルのラベルが定義済み　かつ　注目セルのラベルと違う場合
 		if (neighborLabel >= 0 && src_state_[idx].label_ != neighborLabel)
 			enemyNum[neighborLabel]++;
 	}
@@ -161,20 +186,24 @@ int GrowCut::calcMaxEnemyNum(int idx, const std::vector<int>& neighborIndices, i
 }
 
 
-bool GrowCut::IsForceOccupied(int interestIdx)
+bool GrowCut::IsForceOccupied(int interestIdx, const std::vector<int>& neighborIndices)
 {
-	std::vector<int> neighborIndices = searchNeighborIdx(interestIdx);
 	int weakestEnemyIdx;
 	int maxEnemyNum = calcMaxEnemyNum(interestIdx, neighborIndices, weakestEnemyIdx);
 
 	//注目セルの近傍に多くの敵がいる場合は、最も弱い近傍セルに侵略される
 	if (maxEnemyNum >= force_occupied_threshold_)
 	{
-		double edge = EvaluationFunc(interestIdx, weakestEnemyIdx) * src_state_[weakestEnemyIdx].strength_;
+		double newStrength = EvaluationFunc(interestIdx, weakestEnemyIdx) 
+											 * src_state_[weakestEnemyIdx].strength_;
+
 		src_state_[interestIdx].label_ = src_state_[weakestEnemyIdx].label_;
-		src_state_[interestIdx].strength_ = edge;
+		src_state_[interestIdx].strength_ = newStrength;
 		
 		return true;
 	}
-	return false;
+	else
+		return false;
 }
+
+#pragma managed

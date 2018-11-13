@@ -1,13 +1,15 @@
 #pragma once
+#pragma unmanaged
 
 #include<vector>
+#include<iostream>
 #include"Core"
 
 typedef Eigen::VectorXi EVecXi;
 
 struct CellState
 {
-	int label_; // -1 : undefined, -2 // ïœçXïsâ¬
+	int label_; // -1 : undefined, -2 : lock
 	double strength_;
 	EVecXi feature_vec_;
 
@@ -17,6 +19,13 @@ struct CellState
 		strength_ = strength;
 		feature_vec_ = featureVec;
 	}
+
+  CellState()
+  {
+    label_ = -1;
+    strength_ = 0.0;
+    feature_vec_ = EVecXi(255);
+  }
 };
 
 
@@ -37,6 +46,7 @@ public:
 	~GrowCut();
 
 	void Segmentation(const short* src, const int* initLabel, std::vector<int>& result);
+	bool SegmentationOneStep(const short* src, const int* initLabel, std::vector<int>& result, bool isInit=true);
 private:
 	void initState(const short* src, const int* initLabel);
 	bool GrowCell();
@@ -44,5 +54,7 @@ private:
 	double EvaluationFunc(int idx1, int idx2);
 	int calcMaxEnemyNum(int idx, const std::vector<int>& neighborIdx, int& weakestEnemyIdx);
 
-	bool IsForceOccupied(int interestIdx);
+	bool IsForceOccupied(int interestIdx, const std::vector<int>& neighborIndices);
 };
+
+#pragma managed
